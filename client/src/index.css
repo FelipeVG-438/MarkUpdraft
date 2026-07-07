@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: 'Inter', sans-serif;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 transition-colors duration-300 font-sans antialiased;
+}
+
+body.dark {
+  @apply bg-slate-950 text-slate-100;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 dark:bg-slate-800 rounded-full hover:bg-slate-400 dark:hover:bg-slate-700 transition-colors;
+}
+
+/* Glassmorphism Styles */
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dark .glass {
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Smooth transformations and highlights */
+.tooltip-highlight {
+  position: relative;
+  cursor: help;
+  background-image: linear-gradient(to right, rgba(99, 102, 241, 0.15) 100%, rgba(99, 102, 241, 0.15) 0%);
+  background-position: 0 100%;
+  background-repeat: repeat-x;
+  background-size: 4px 4px;
+  border-bottom: 2px dashed rgb(129, 140, 248);
+  padding: 0 2px;
+  border-radius: 2px;
+  transition: all 0.2s ease-in-out;
+}
+
+.tooltip-highlight:hover {
+  background-color: rgba(99, 102, 241, 0.1);
+  color: rgb(79, 70, 229);
+}
+
+.dark .tooltip-highlight:hover {
+  background-color: rgba(129, 140, 248, 0.15);
+  color: rgb(165, 180, 252);
+}
+
+/* Typing / streaming indicator keyframe */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
+
+.dot-pulse {
+  animation: pulse-dot 1.4s infinite both;
+}
+
+.dot-pulse-delay-1 {
+  animation-delay: 0.2s;
+}
+
+.dot-pulse-delay-2 {
+  animation-delay: 0.4s;
+}

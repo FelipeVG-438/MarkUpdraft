@@ -1,0 +1,14 @@
+{
+  "name": "markupdraft-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install-all": "pnpm --filter ./server install && pnpm --filter ./client install",
+    "dev:server": "pnpm --filter ./server dev",
+    "dev:client": "pnpm --filter ./client dev",
+    "dev": "concurrently -n \"server,client\" -c \"bgBlue,bgGreen\" \"pnpm dev:server\" \"pnpm dev:client\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
