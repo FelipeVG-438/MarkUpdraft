@@ -39,113 +39,70 @@ app.post('/api/transform', async (req, res) => {
   }
 
   try {
-    if (mode === 'explain') {
-      // Explain Mode (JSON Extraction - Strict Schema)
-      const systemInstruction = 
-        "Identify advanced technical terms, acronyms, or complex data metrics in the input text. " +
-        "Return a JSON array of objects, where each object has a 'term' and an 'explanation' field. " +
-        "The term must match the exact case-sensitive word/phrase present in the input. " +
-        "The explanation should be a short, precise definition.";
+    let textToProcess = text;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: text,
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'ARRAY',
-            items: {
-              type: 'OBJECT',
-              properties: {
-                term: { type: 'STRING' },
-                explanation: { type: 'STRING' }
-              },
-              required: ['term', 'explanation']
-            }
-          }
-        }
-      });
-
-      const responseText = response.text;
-      if (!responseText) {
-        throw new Error('Gemini API returned an empty response.');
+    // 1. Original Mode Hybrid Pre-Processing
+    if (mode === 'original') {
+      try {
+        // Format raw markdown structures, spacing, and tables first
+        textToProcess = await prettier.format(text, { parser: 'markdown' });
+      } catch (prettierErr) {
+        console.warn('Prettier formatting failed, using raw input: ', prettierErr);
       }
-
-      // Parse array and map it to a flat dictionary
-      const parsedArray = JSON.parse(responseText);
-      const dictionary = {};
-      for (const item of parsedArray) {
-        if (item.term && item.explanation) {
-          dictionary[item.term] = item.explanation;
-        }
-      }
-
-      return res.json(dictionary);
-
-    } else {
-      // Streaming Modes: Original (smoothed), Summarize, and Expand
-      let textToProcess = text;
-
-      // 1. Original Mode Hybrid Pre-Processing
-      if (mode === 'original') {
-        try {
-          // Format raw markdown structures, spacing, and tables first
-          textToProcess = await prettier.format(text, { parser: 'markdown' });
-        } catch (prettierErr) {
-          console.warn('Prettier formatting failed, using raw input: ', prettierErr);
-        }
-      }
-
-      // Determine system instructions based on mode
-      let systemInstruction = '';
-      if (mode === 'original') {
-        systemInstruction = 
-          "Role: Markdown Smoothing Engine\n" +
-          "Task: Smooth the grammar, sentence structure, and flow of the input Markdown text. " +
-          "Maintain all original formatting, structures, tables, and spacing exactly. " +
-          "Return ONLY the smoothed markdown. Do not wrap the output in markdown blockquotes, " +
-          "and do not include any introductory conversational text.";
-      } else if (mode === 'summarize') {
-        systemInstruction = 
-          "Role: Markdown Transformation Engine\n" +
-          "Task: Condense the input text into a highly structured, scannable, bulleted Markdown layout. " +
-          "Extract core themes and action items. Return ONLY the final formatted Markdown. " +
-          "Do not wrap the output in markdown blockquotes, and do not include any introductory conversational text.";
-      } else if (mode === 'expand') {
-        systemInstruction = 
-          "Role: Markdown Transformation Engine\n" +
-          "Task: Logically elaborate on the input text, filling in context while maintaining the original tone. " +
-          "Return ONLY the expanded Markdown. Do not wrap the output in markdown blockquotes, " +
-          "and do not include any introductory conversational text.";
-      } else {
-        return res.status(400).send(`Unsupported transformation mode: ${mode}`);
-      }
-
-      // Set headers for Server-Sent Events (SSE) streaming
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.flushHeaders();
-
-      // Call streaming Gemini API
-      const responseStream = await ai.models.generateContentStream({
-        model: 'gemini-2.5-flash',
-        contents: textToProcess,
-        config: {
-          systemInstruction
-        }
-      });
-
-      for await (const chunk of responseStream) {
-        if (chunk.text) {
-          res.write(`data: ${chunk.text}\n\n`);
-        }
-      }
-
-      res.write('data: [DONE]\n\n');
-      res.end();
     }
+
+    // Determine system instructions based on mode
+    let systemInstruction = '';
+    if (mode === 'original') {
+      systemInstruction = 
+        "Role: Markdown Smoothing Engine\n" +
+        "Task: Smooth the grammar, sentence structure, and flow of the input Markdown text. " +
+        "CRITICAL: Maintain all original formatting, structures, tables, lists, and spacing exactly. " +
+        "Do not alter headers or list bullet prefixes. Return ONLY the smoothed markdown. " +
+        "Do not wrap the output in markdown blockquotes, and do not include any introductory conversational text.";
+    } else if (mode === 'summarize') {
+      systemInstruction = 
+        "Role: Markdown Summarization Engine\n" +
+        "Task: Condense the prose sections of the input text into highly structured, scannable bullet points. " +
+        "CRITICAL: Maintain the overall document structure, including primary headers (#, ##, etc.), lists, and tables exactly. " +
+        "Do NOT convert titles, main headings, or table cells into bullet lists. Only summarize the descriptive narrative prose " +
+        "under their existing headings. Return ONLY the final formatted Markdown. " +
+        "Do not wrap the output in markdown blockquotes, and do not include any introductory conversational text.";
+    } else if (mode === 'expand') {
+      systemInstruction = 
+        "Role: Markdown Expansion Engine\n" +
+        "Task: Logically elaborate on the input text, filling in context, details, and completing partial thoughts. " +
+        "CRITICAL: Maintain the original formatting, structures, headers, lists, and tables exactly as is. " +
+        "Do not alter the structural hierarchy of the document; only expand the content within each section to make it " +
+        "well-structured, detailed, and clear. Return ONLY the expanded Markdown. " +
+        "Do not wrap the output in markdown blockquotes, and do not include any introductory conversational text.";
+    } else {
+      return res.status(400).send(`Unsupported transformation mode: ${mode}`);
+    }
+
+    // Set headers for Server-Sent Events (SSE) streaming
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Call streaming Gemini API
+    const responseStream = await ai.models.generateContentStream({
+      model: 'gemini-2.5-flash',
+      contents: textToProcess,
+      config: {
+        systemInstruction
+      }
+    });
+
+    for await (const chunk of responseStream) {
+      if (chunk.text) {
+        res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
   } catch (err) {
     console.error('Transformation Error: ', err);
     if (!res.headersSent) {

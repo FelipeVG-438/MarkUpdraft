@@ -11,7 +11,9 @@ import {
   Sun, 
   Moon, 
   AlertTriangle,
-  Play
+  Play,
+  Upload,
+  ChevronDown
 } from 'lucide-react';
 import { PRESETS } from './presets';
 import type { Preset } from './presets';
@@ -36,8 +38,8 @@ export default function App() {
 
   // Editor states
   const [markdown, setMarkdown] = useState<string>(PRESETS[0].content);
+  const [originalMarkdown, setOriginalMarkdown] = useState<string>(PRESETS[0].content);
   const [history, setHistory] = useState<string[]>([]);
-  const [explanations, setExplanations] = useState<Record<string, string>>({});
   
   // Selection tracking
   const [selectionInfo, setSelectionInfo] = useState<SelectionInfo>({
@@ -49,18 +51,20 @@ export default function App() {
   });
 
   // Mode and loading states
-  const [mode, setMode] = useState<'original' | 'summarize' | 'explain' | 'expand'>('original');
+  const [mode, setMode] = useState<'original' | 'summarize' | 'expand'>('original');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
   
-  // Preview tab: 'preview' | 'html' | 'raw'
-  const [previewTab, setPreviewTab] = useState<'preview' | 'html' | 'raw'>('preview');
+  // Preview tab: 'original' | 'preview' | 'html' | 'raw'
+  const [previewTab, setPreviewTab] = useState<'original' | 'preview' | 'html' | 'raw'>('preview');
   
   // Copy state feedback
   const [copiedType, setCopiedType] = useState<'markdown' | 'html' | null>(null);
 
   // References
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Apply theme class
   useEffect(() => {
@@ -151,7 +155,7 @@ export default function App() {
   const handleLoadPreset = (preset: Preset) => {
     setHistory(prev => [...prev, markdown]);
     setMarkdown(preset.content);
-    setExplanations({});
+    setOriginalMarkdown(preset.content);
     setError(null);
     
     // Focus and reset cursor
@@ -184,7 +188,7 @@ export default function App() {
   const handleClear = () => {
     setHistory(prev => [...prev, markdown]);
     setMarkdown('');
-    setExplanations({});
+    setOriginalMarkdown('');
     setSelectionInfo({
       text: '',
       start: 0,
@@ -193,6 +197,24 @@ export default function App() {
       label: 'Editor Empty'
     });
     setError(null);
+  };
+
+  // Local markdown file loader
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (text !== undefined) {
+        setMarkdown(text);
+        setOriginalMarkdown(text);
+        setHistory(prev => [...prev, markdown]);
+        setError(null);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   // Clipboard copy utilities
@@ -224,6 +246,7 @@ export default function App() {
 
     setIsLoading(true);
     setError(null);
+    setOriginalMarkdown(markdown); // Snapshot original markdown before AI starts streaming updates
 
     // Save previous state to history
     setHistory(prev => [...prev, markdown]);
@@ -245,52 +268,57 @@ export default function App() {
         throw new Error(errorText || 'Server transformation failed.');
       }
 
-      if (mode === 'explain') {
-        // JSON Extraction returns object mapping directly
-        const payload = await response.json();
-        if (payload && typeof payload === 'object') {
-          setExplanations(prev => ({
-            ...prev,
-            ...payload
-          }));
-        } else {
-          throw new Error('Invalid JSON schema returned by server.');
-        }
-        setIsLoading(false);
-      } else {
-        // SSE streams text chunks
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        if (!reader) throw new Error('Response stream not readable.');
+      // SSE streams text chunks
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error('Response stream not readable.');
 
-        let accumulated = '';
-        const beforeText = markdown.substring(0, selectionInfo.start);
-        const afterText = markdown.substring(selectionInfo.end);
+      let accumulated = '';
+      const beforeText = markdown.substring(0, selectionInfo.start);
+      const afterText = markdown.substring(selectionInfo.end);
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      let buffer = ''; // Buffer for incomplete network lines
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') {
-                break;
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const lines = buffer.split('\n');
+        // Save the last element (which is either empty or incomplete) back to the buffer
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
+          if (trimmedLine.startsWith('data: ')) {
+            const rawData = trimmedLine.slice(6).trim();
+            if (rawData === '[DONE]') {
+              break;
+            }
+            if (rawData.startsWith('[ERROR]')) {
+              throw new Error(rawData.slice(7).trim());
+            }
+
+            try {
+              const payload = JSON.parse(rawData);
+              if (payload && typeof payload.text === 'string') {
+                accumulated += payload.text;
+                
+                // Incrementally update editor text
+                const newMarkdown = beforeText + accumulated + afterText;
+                setMarkdown(newMarkdown);
               }
-              // Add spaces/newlines formatting
-              accumulated += data;
-              
-              // Incrementally update editor text
-              const newMarkdown = beforeText + accumulated + afterText;
-              setMarkdown(newMarkdown);
+            } catch (jsonErr) {
+              console.warn('Failed to parse SSE JSON payload:', jsonErr);
             }
           }
         }
-        setIsLoading(false);
       }
+      setIsLoading(false);
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'An unexpected connection error occurred.');
@@ -305,6 +333,15 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans transition-colors duration-300">
       
+      {/* Hidden File Input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        accept=".md,.txt,.markdown"
+        className="hidden"
+      />
+
       {/* Premium Header */}
       <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 dark:border-slate-800/80 glass shadow-sm">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -361,14 +398,127 @@ export default function App() {
           </div>
         )}
 
-        {/* Workspace Panels Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch min-h-[calc(100vh-14rem)]">
+        {/* TOP: Options and Control Center */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-colors">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+              AI Enhance Mode:
+            </span>
+            <div className="flex items-center gap-1 p-0.5 bg-slate-100 dark:bg-slate-950 rounded-xl border border-slate-200/60 dark:border-slate-800/80">
+              <button
+                onClick={() => setMode('original')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  mode === 'original'
+                    ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                Original (Hybrid)
+              </button>
+              <button
+                onClick={() => setMode('summarize')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  mode === 'summarize'
+                    ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                Summarize
+              </button>
+              <button
+                onClick={() => setMode('expand')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  mode === 'expand'
+                    ? 'bg-indigo-600 dark:bg-indigo-500 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                }`}
+              >
+                Expand
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Presets Custom Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowPresetsDropdown(!showPresetsDropdown)}
+                className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 text-xs font-semibold flex items-center gap-1.5 transition-all text-slate-700 dark:text-slate-350 shadow-sm"
+              >
+                <BookOpen className="h-4 w-4" />
+                <span>Load Preset</span>
+                <ChevronDown className={`h-3 w-3 transition-transform ${showPresetsDropdown ? 'rotate-180' : ''}`} />
+              </button>
+              
+              {showPresetsDropdown && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowPresetsDropdown(false)} />
+                  <div className="absolute right-0 mt-2 w-72 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl z-20 py-2 animate-fade-in">
+                    {PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        onClick={() => {
+                          handleLoadPreset(preset);
+                          setShowPresetsDropdown(false);
+                        }}
+                        className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-850 transition-colors flex flex-col gap-0.5"
+                      >
+                        <span className="font-bold text-xs text-slate-800 dark:text-slate-205">{preset.name}</span>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{preset.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Load File Button */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 text-xs font-semibold flex items-center gap-1.5 transition-all text-slate-700 dark:text-slate-350 shadow-sm"
+              title="Upload Local Markdown File"
+            >
+              <Upload className="h-4 w-4" />
+              <span>Load File</span>
+            </button>
+
+            {/* Transform Execution Button */}
+            <button
+              onClick={handleTransform}
+              disabled={isLoading || !selectionInfo.text}
+              className={`py-2 px-4 rounded-xl font-semibold text-xs transition-all duration-300 flex items-center justify-center gap-1.5 text-white shadow-md ${
+                isLoading || !selectionInfo.text
+                  ? 'bg-slate-450 dark:bg-slate-800 cursor-not-allowed opacity-50 shadow-none'
+                  : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98]'
+              }`}
+            >
+              {isLoading ? (
+                <>
+                  <div className="flex gap-1 items-center">
+                    <span className="h-1.5 w-1.5 bg-white rounded-full dot-pulse"></span>
+                    <span className="h-1.5 w-1.5 bg-white rounded-full dot-pulse dot-pulse-delay-1"></span>
+                    <span className="h-1.5 w-1.5 bg-white rounded-full dot-pulse dot-pulse-delay-2"></span>
+                  </div>
+                  <span>Streaming...</span>
+                </>
+              ) : (
+                <>
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>Transform {selectionInfo.isFullDoc ? 'Draft' : 'Selection'}</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* BOTTOM: Workspace Panels (Editor / Preview 50-50 Split) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
           
           {/* LEFT: Editor Pane */}
-          <div className="lg:col-span-5 flex flex-col bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+          <div className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden lg:h-[calc(100vh-280px)] transition-colors">
             
             {/* Editor Header Bar */}
-            <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+            <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between transition-colors">
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
                 <span className="text-sm font-semibold">Markdown Editor</span>
@@ -377,7 +527,7 @@ export default function App() {
                 <button
                   onClick={handleUndo}
                   disabled={history.length === 0}
-                  className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+                  className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-880 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
                   title="Undo last change"
                 >
                   <RotateCcw className="h-4 w-4" />
@@ -385,7 +535,7 @@ export default function App() {
                 <button
                   onClick={handleClear}
                   disabled={!markdown}
-                  className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+                  className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-880 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
                   title="Clear document"
                 >
                   <Trash2 className="h-4 w-4 text-red-500/80" />
@@ -394,7 +544,7 @@ export default function App() {
             </div>
 
             {/* Presets and Status info */}
-            <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/20 flex flex-wrap gap-2 items-center justify-between">
+            <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/20 flex flex-wrap gap-2 items-center justify-between transition-colors">
               <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-indigo-500"></span>
                 {selectionInfo.label}
@@ -407,7 +557,7 @@ export default function App() {
             </div>
 
             {/* Main Edit Textarea */}
-            <div className="flex-1 relative">
+            <div className="flex-1 relative bg-transparent min-h-[450px] lg:min-h-0">
               <textarea
                 ref={textareaRef}
                 value={markdown}
@@ -415,181 +565,62 @@ export default function App() {
                 onSelect={handleSelectionChange}
                 onKeyUp={handleSelectionChange}
                 onMouseUp={handleSelectionChange}
-                className="w-full h-full min-h-[450px] lg:min-h-0 p-6 resize-none bg-transparent outline-none font-mono text-sm leading-relaxed text-slate-800 dark:text-slate-200 border-0 focus:ring-0"
+                className="absolute inset-0 w-full h-full p-6 resize-none bg-transparent outline-none font-mono text-sm leading-relaxed text-slate-800 dark:text-slate-200 border-0 focus:ring-0 overflow-y-auto"
                 placeholder="Type or paste your markdown here... Select text or position the cursor inside a paragraph to trigger token-optimized transformations."
               />
             </div>
             
-            {/* Quick Presets Footer */}
-            <div className="p-3 bg-slate-50 dark:bg-slate-900/40 border-t border-slate-200 dark:border-slate-800">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-2">
-                Sample Sandbox Presets
-              </span>
-              <div className="flex flex-col gap-1.5">
-                {PRESETS.map((preset) => (
-                  <button
-                    key={preset.id}
-                    onClick={() => handleLoadPreset(preset)}
-                    className="w-full text-left p-2 rounded-lg text-xs border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-indigo-500/50 hover:bg-slate-50 dark:hover:bg-slate-850 hover:shadow-sm transition-all duration-200 flex flex-col"
-                  >
-                    <span className="font-bold text-slate-700 dark:text-slate-350">{preset.name}</span>
-                    <span className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{preset.description}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-          </div>
-
-          {/* CENTER: AI Control Center */}
-          <div className="lg:col-span-2 flex flex-col justify-center items-center gap-4 bg-slate-100 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800/80 rounded-2xl p-4 shadow-inner">
-            <div className="w-full text-center">
-              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                TRANSFORM MODE
-              </h2>
-            </div>
-            
-            {/* Mode selection buttons */}
-            <div className="flex flex-col w-full gap-2">
-              <button
-                onClick={() => setMode('original')}
-                className={`w-full p-3 rounded-xl border text-xs font-semibold text-left transition-all duration-200 flex flex-col gap-1 ${
-                  mode === 'original'
-                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/20'
-                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-750 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <span>1. Original (Hybrid)</span>
-                <span className={`text-[10px] ${mode === 'original' ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                  Local cleanup + grammatical smoothing
-                </span>
-              </button>
-
-              <button
-                onClick={() => setMode('summarize')}
-                className={`w-full p-3 rounded-xl border text-xs font-semibold text-left transition-all duration-200 flex flex-col gap-1 ${
-                  mode === 'summarize'
-                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/20'
-                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-750 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <span>2. Summarize (Streamed)</span>
-                <span className={`text-[10px] ${mode === 'summarize' ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                  Scannable, visual bullet outlines
-                </span>
-              </button>
-
-              <button
-                onClick={() => setMode('explain')}
-                className={`w-full p-3 rounded-xl border text-xs font-semibold text-left transition-all duration-200 flex flex-col gap-1 ${
-                  mode === 'explain'
-                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/20'
-                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-750 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <span>3. Explain (JSON Extraction)</span>
-                <span className={`text-[10px] ${mode === 'explain' ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                  Identify terms & load active tooltips
-                </span>
-              </button>
-
-              <button
-                onClick={() => setMode('expand')}
-                className={`w-full p-3 rounded-xl border text-xs font-semibold text-left transition-all duration-200 flex flex-col gap-1 ${
-                  mode === 'expand'
-                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-500/20'
-                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-750 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                <span>4. Expand (Streamed)</span>
-                <span className={`text-[10px] ${mode === 'expand' ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                  Elaborate and complete rough drafts
-                </span>
-              </button>
-            </div>
-
-            {/* Transform Execution Button */}
-            <button
-              onClick={handleTransform}
-              disabled={isLoading || !selectionInfo.text}
-              className={`w-full mt-2 py-3.5 px-4 rounded-xl font-semibold text-sm transition-all duration-300 flex items-center justify-center gap-2 text-white shadow-md ${
-                isLoading || !selectionInfo.text
-                  ? 'bg-slate-450 dark:bg-slate-800 cursor-not-allowed opacity-50 shadow-none'
-                  : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 active:scale-[0.98] shadow-indigo-500/10 hover:shadow-lg hover:shadow-indigo-500/20'
-              }`}
-            >
-              {isLoading ? (
-                <>
-                  <div className="flex gap-1 items-center">
-                    <span className="h-2 w-2 bg-white rounded-full dot-pulse"></span>
-                    <span className="h-2 w-2 bg-white rounded-full dot-pulse dot-pulse-delay-1"></span>
-                    <span className="h-2 w-2 bg-white rounded-full dot-pulse dot-pulse-delay-2"></span>
-                  </div>
-                  <span>Streaming...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4 fill-current" />
-                  <span>Draft Transform</span>
-                </>
-              )}
-            </button>
-
-            {/* Selection scope hint */}
-            <div className="text-center mt-2 px-1">
-              <span className="text-[10px] text-slate-400 dark:text-slate-500 block leading-normal">
-                {selectionInfo.isFullDoc 
-                  ? 'Targeting full editor workspace.' 
-                  : 'Targeting active highlighted section.'
-                }
-              </span>
-            </div>
           </div>
 
           {/* RIGHT: Preview Pane */}
-          <div className="lg:col-span-5 flex flex-col bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+          <div className="flex flex-col bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden lg:h-[calc(100vh-280px)] transition-colors">
             
             {/* Preview Header / Tabs */}
-            <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2">
+            <div className="px-4 py-3 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2 transition-colors">
               <div className="flex items-center gap-1.5 p-0.5 bg-slate-200/60 dark:bg-slate-800 rounded-lg">
                 <button
-                  onClick={() => setPreviewTab('preview')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                    previewTab === 'preview'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                  onClick={() => setPreviewTab('original')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    previewTab === 'original'
+                      ? 'bg-white dark:bg-slate-900 text-slate-950 dark:text-white shadow-sm'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                   }`}
                 >
-                  <span className="flex items-center gap-1.5">
-                    <BookOpen className="h-3.5 w-3.5" />
-                    Preview
-                  </span>
+                  <FileText className="h-3.5 w-3.5" />
+                  Original
+                </button>
+                <button
+                  onClick={() => setPreviewTab('preview')}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    previewTab === 'preview'
+                      ? 'bg-white dark:bg-slate-900 text-slate-950 dark:text-white shadow-sm'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                  }`}
+                >
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Preview
                 </button>
                 <button
                   onClick={() => setPreviewTab('html')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
                     previewTab === 'html'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                      ? 'bg-white dark:bg-slate-900 text-slate-950 dark:text-white shadow-sm'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                   }`}
                 >
-                  <span className="flex items-center gap-1.5">
-                    <Code className="h-3.5 w-3.5" />
-                    HTML View
-                  </span>
+                  <Code className="h-3.5 w-3.5" />
+                  HTML
                 </button>
                 <button
                   onClick={() => setPreviewTab('raw')}
-                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
                     previewTab === 'raw'
-                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                      ? 'bg-white dark:bg-slate-900 text-slate-950 dark:text-white shadow-sm'
                       : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                   }`}
                 >
-                  <span className="flex items-center gap-1.5">
-                    <FileText className="h-3.5 w-3.5" />
-                    Markdown
-                  </span>
+                  <FileText className="h-3.5 w-3.5" />
+                  Raw
                 </button>
               </div>
 
@@ -597,7 +628,7 @@ export default function App() {
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => handleCopyText('markdown')}
-                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 text-xs font-semibold flex items-center gap-1.5 transition-all text-slate-600 dark:text-slate-300"
+                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 text-xs font-semibold flex items-center gap-1.5 transition-all text-slate-650 dark:text-slate-350 shadow-sm"
                   title="Copy Raw Markdown"
                 >
                   {copiedType === 'markdown' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
@@ -605,7 +636,7 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => handleCopyText('html')}
-                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 text-xs font-semibold flex items-center gap-1.5 transition-all text-slate-600 dark:text-slate-300"
+                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-850 text-xs font-semibold flex items-center gap-1.5 transition-all text-slate-650 dark:text-slate-350 shadow-sm"
                   title="Copy Compiled HTML"
                 >
                   {copiedType === 'html' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
@@ -614,31 +645,25 @@ export default function App() {
               </div>
             </div>
 
-            {/* Explanation items header */}
-            {Object.keys(explanations).length > 0 && previewTab === 'preview' && (
-              <div className="px-4 py-2 border-b border-indigo-100 dark:border-indigo-900/30 bg-indigo-50/30 dark:bg-indigo-950/10 flex items-center gap-2">
-                <Sparkles className="h-3.5 w-3.5 text-indigo-500 animate-spin" />
-                <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
-                  {Object.keys(explanations).length} technical explanations loaded. Hover highlighted terms to inspect.
-                </span>
-              </div>
-            )}
-
             {/* Display Body according to tab */}
-            <div className="flex-1 p-6 overflow-y-auto min-h-[450px] lg:min-h-0 bg-transparent">
+            <div className="flex-1 p-6 overflow-y-auto bg-transparent relative">
+              {previewTab === 'original' && (
+                <MarkdownPreview 
+                  markdown={originalMarkdown || '*No document loaded to preview.*'} 
+                />
+              )}
               {previewTab === 'preview' && (
                 <MarkdownPreview 
                   markdown={markdown || '*Editor empty. Write something to see preview.*'} 
-                  explanations={explanations} 
                 />
               )}
               {previewTab === 'html' && (
-                <pre className="text-xs font-mono whitespace-pre-wrap select-all text-slate-700 dark:text-slate-300 leading-relaxed">
+                <pre className="text-xs font-mono whitespace-pre-wrap select-all text-slate-750 dark:text-slate-250 leading-relaxed p-2">
                   {markdown ? marked.parse(markdown) : '<!-- Write something to see compiled HTML -->'}
                 </pre>
               )}
               {previewTab === 'raw' && (
-                <pre className="text-xs font-mono whitespace-pre-wrap select-all text-slate-700 dark:text-slate-300 leading-relaxed">
+                <pre className="text-xs font-mono whitespace-pre-wrap select-all text-slate-750 dark:text-slate-250 leading-relaxed p-2">
                   {markdown || '/* Editor empty. Write something to see raw Markdown. */'}
                 </pre>
               )}
