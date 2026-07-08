@@ -120,5 +120,6 @@ MarkUpdraft/
 │   ├── .env                     # Local environment file (API Key)
 │   └── package.json
 ├── package.json                 # Monorepo task runner script configuration
+├── PROJECT_SPECIFICATION.md     # Original project request
 └── README.md                    # Project documentation
 ```

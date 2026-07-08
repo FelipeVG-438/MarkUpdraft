@@ -1,10 +1,10 @@
-# **🪐 Project MarkUpdraft: Specification & Architectural Prompt (Token-Optimized)**
+# **Project MarkUpdraft: Specification & Architectural Prompt (Token-Optimized)**
 
 You are an expert software engineering agent inside **Google Antigravity**. Your objective is to build **MarkUpdraft**, a dual-pane web application that transforms raw or messy Markdown into highly visual, structured, and modern documents using token-efficient, real-time, AI-assisted modifications.
 
 Use this document as your master guide to plan, code, and test the system.
 
-## **🛠️ 1\. Technical Stack Constraints**
+## **1\. Technical Stack Constraints**
 
 To ensure modern development practices, clean modular architecture, and security, you must adhere strictly to this tech stack:
 
@@ -14,7 +14,7 @@ To ensure modern development practices, clean modular architecture, and security
 * **AI Engine:** Gemini 2.5/3.5 Flash via the official @google/genai SDK.  
 * **Data Flow:** HTTP Streaming (Server-Sent Events) for text generation, or structured JSON parsing for token-efficient extractions.
 
-## **📋 2\. Software Requirements Specification**
+## **2\. Software Requirements Specification**
 
 ### **Functional Requirements (FR)**
 
@@ -41,7 +41,7 @@ To ensure modern development practices, clean modular architecture, and security
 
 * **NFR-1: Token and Cost Efficiency (Output Minimization):**  
   * The app must minimize output tokens by leveraging localized JSON extraction for explanations and client-side formatting where possible.  
-  * Average token usage per document transformation should be reduced by up to ![][image1] compared to full-document rewrite approaches.  
+  * Average token usage per document transformation should be reduced by up to 90% compared to full-document rewrite approaches.  
 * **NFR-2: Streamed Progressive Rendering (Low Latency):**  
   * Summary and Expansion responses must stream character-by-character from the backend to prevent loading delays.  
 * **NFR-3: Premium Visual Aesthetics (The Notion Feel):**  
@@ -49,7 +49,7 @@ To ensure modern development practices, clean modular architecture, and security
 * **NFR-4: Exception Boundaries:**  
   * Gracefully capture rate limits, API key issues, or JSON parsing errors. Notify the user via non-blocking UI alert cards.
 
-## **🧠 3\. AI Prompt & Instruction Set**
+## **3\. AI Prompt & Instruction Set**
 
 When calling the Gemini API from the backend server, apply the following optimized instructions based on the requested execution mode:
 
@@ -76,7 +76,7 @@ Example Output:
 
 Constraint: Return ONLY valid, minified JSON. Do not wrap in markdown code blocks.
 
-## **🗺️ 4\. Phased Implementation Plan for Antigravity**
+## **4\. Phased Implementation Plan for Antigravity**
 
 Please construct the codebase sequentially following these phases:
 
@@ -104,5 +104,3 @@ Please construct the codebase sequentially following these phases:
 1. Hook up the client-side handlers to parse the incoming text streams.  
 2. Integrate a dynamic tooltip parser in the React Markdown preview pane that highlights terms returned by the Explain JSON payload, showing interactive tooltips on hover.  
 3. Polish UI with modern theme controls, animations, and clean status overlays.
-
-[image1]: <data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACYAAAAZCAYAAABdEVzWAAACCUlEQVR4Xu1VTSiEURQdJT8pUWoyzcybxqQMC8VKWclKko2/skIpSztlY6VYsLBio+zsZCd28lOKEpGVJAulKKSZxrnNe+a63vvMqCmL79Tpu/fc896773vfTyDg458gGo32Sk0iFou1Sq1oQEPNSql3fU1FIpF26SGgqWvU+6X+DTCcgYfgFCYcxaBhcAgcJArvLPgMvoJjvKbrGTTTQDHmqkX+BqbBaeTduK6SB3yQY39AG118Yr4LcIfl5+C+ybWWceWI6/X1PefwAA3GLjvp9ofD4QSucSKfNJFIVMtFCaThrtZQHAqF6qTHks+o347QAMYTi3aAZltYfioX0XoGXOO5rLO0VOVzhC5gcAe4KTRqwNUYP64PcIRi3PUucILXTPwn5NOAl661DfCRaXM48j7uKwgYvE6Uuq0BL50jmUyWwXNvcsRNKvtW73GfJ2gRNBaz6bYGXDoH6ikT85coGAxWIb7MOR2Aady1iKsBl26APc6j3mNyPHO30LZMjtqNiZ3QX2PrItBfbDXdmHXXmK8CtTuuaf8K8yzxuhVeu8dOB2w10lBrkzoBtbRFk40t87oVXo0RqIaJJlm+4PJDX6TPhdShHaG2bXKVz1Hqxr4eVAn8FSp1c8cq+3+lX0uJ9OkjtC6Ih7/cbEY//OfSUzRgsSupccTj8UaV/RDvypoPHz58FIhPh1O7XHt6ZU0AAAAASUVORK5CYII=>
